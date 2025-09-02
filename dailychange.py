@@ -1,102 +1,171 @@
-import yfinance as yf
-import pandas as pd
-import time
-import json
 import os
-from colorama import Fore, Style
+import json
+import time
+import logging
+from   typing import Dict, List
 
-# Define your full list of tickers
-tickers = [
+import pandas as pd
+import yfinance as yf
+from   colorama import Fore, Style
+
+# -----------------------------
+# Configuration
+# -----------------------------
+TICKERS: List[str] = [
     "SPY","PEP","PINS","DELL","KO","NVDA","AMD","AVGO","TSM","PYPL","UBER","SNAP","RDDT",
     "META","GOOG","AMZN","LLY","MU","BIDU","BABA","T","F","TSLA","NIO","AMC",
     "TTWO","ORCL","NFLX","COST","VZ","AAPL","PLTR","INTC","QUBT","HOOD",
     "MSFT","V","UNH","WMT","JNJ","JPM","ADBE","AMGN","QCOM","ASML","AMAT",
-    "ADP","CTAS","BA","CAT","IBM","MCD","AXP","GS","DKNG", "QQQ"
+    "ADP","CTAS","BA","CAT","IBM","MCD","AXP","GS","DKNG","QQQ"
 ]
+SECTOR_CACHE_FILE = "sectors.json"
+REFRESH_SECONDS = 10
+DOWNLOAD_PERIOD = "5d"
+DOWNLOAD_INTERVAL = "1d"
 
-# Cache sector info in a local file
-sector_file = "sectors.json"
-sectors = {}
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
-if os.path.exists(sector_file):
-    with open(sector_file, "r") as f:
-        sectors = json.load(f)
-    print("📂 Loaded cached sector data.\n")
-else:
-    print("📡 Fetching sector info (one-time)...")
-    for i, ticker in enumerate(tickers):
+# -----------------------------
+# Sector mapping (cached)
+# -----------------------------
+def load_sector_cache(path: str) -> Dict[str, str]:
+    if os.path.exists(path):
         try:
-            info = yf.Ticker(ticker).info
-            sectors[ticker] = info.get("sector", "Unknown")
-            print(f"✅ {ticker} → {sectors[ticker]}")
-            time.sleep(0.5)  # Avoid rate-limiting
-        except Exception as e:
-            sectors[ticker] = "Unknown"
-            print(f"⚠️ {ticker}: {e}")
-    with open(sector_file, "w") as f:
-        json.dump(sectors, f)
-    print("✅ Sector mapping complete and saved.\n")
+            with open(path, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                logging.info("Loaded sector cache from %s", path)
+                return data
+        except Exception as exc:
+            logging.warning("Failed to read sector cache: %s", exc)
+    return {}
 
-# Live loop
-while True:
-    print("\n📊 Stock Price % Change (Updated every minute)\n")
-    try:
-        data = yf.download(tickers, period="5d", interval="1d", threads=True, progress=False)
+def build_sector_cache(tickers: List[str]) -> Dict[str, str]:
+    """Fetch sector info once (best effort)."""
+    sectors: Dict[str, str] = {}
+    logging.info("Building sector cache (one-time fetch)...")
+    for tk in tickers:
+        try:
+            info = yf.Ticker(tk).info  # yfinance still exposes sector here
+            sectors[tk] = info.get("sector", "Unknown")
+        except Exception as exc:
+            sectors[tk] = "Unknown"
+            logging.debug("Sector fetch failed for %s: %s", tk, exc)
+        time.sleep(0.2)  # gentle pacing to avoid rate-limiting
+    return sectors
 
-        if data.empty:
-            raise ValueError("No data returned from Yahoo Finance")
+def ensure_sector_cache(path: str, tickers: List[str]) -> Dict[str, str]:
+    sectors = load_sector_cache(path)
+    missing = [tk for tk in tickers if tk not in sectors]
+    if missing:
+        fetched = build_sector_cache(missing)
+        sectors.update(fetched)
+        try:
+            with open(path, "w") as f:
+                json.dump(sectors, f)
+            logging.info("Sector cache updated: %s", path)
+        except Exception as exc:
+            logging.warning("Failed to write sector cache: %s", exc)
+    return sectors
 
-        results = []
-        for ticker in tickers:
-            try:
-                close_prices = data["Close"][ticker].dropna()
-                if len(close_prices) < 2:
-                    raise ValueError("Not enough data")
-                prev = close_prices.iloc[-2]
-                current = close_prices.iloc[-1]
-                change = (current - prev) / prev * 100
+# -----------------------------
+# Display helpers
+# -----------------------------
+def print_sector_block(df: pd.DataFrame, sector: str) -> None:
+    print(f"\nSector: {sector}")
+    print(f"{'Ticker':<6} {'Prev':>10} {'Cur':>10} {'%Chg':>8}")
+    for _, r in df.iterrows():
+        color = (
+            Fore.GREEN if r["% Change"] > 0
+            else Fore.RED if r["% Change"] < 0
+            else Fore.LIGHTBLACK_EX
+        )
+        print(
+            f"{r['Ticker']:<6} "
+            f"{r['Previous']:>10.2f} "
+            f"{r['Current']:>10.2f} "
+            f"{color}{r['% Change']:>7.2f}%{Style.RESET_ALL}"
+        )
 
-                results.append({
-                    "Ticker": ticker,
-                    "Sector": sectors.get(ticker, "Unknown"),
-                    "Previous": prev,
-                    "Current": current,
-                    "% Change": change
-                })
-            except Exception as e:
-                results.append({
-                    "Ticker": ticker,
-                    "Sector": sectors.get(ticker, "Unknown"),
-                    "Previous": None,
-                    "Current": None,
-                    "% Change": None,
-                    "Error": str(e)
-                })
+# -----------------------------
+# Main loop
+# -----------------------------
+def main() -> None:
+    sectors = ensure_sector_cache(SECTOR_CACHE_FILE, TICKERS)
 
-        # Display
-        df = pd.DataFrame(results).dropna(subset=["% Change"])
-        df = df.sort_values(by="% Change", ascending=False)
+    while True:
+        logging.info("Fetching price data...")
+        try:
+            data = yf.download(
+                TICKERS,
+                period=DOWNLOAD_PERIOD,
+                interval=DOWNLOAD_INTERVAL,
+                threads=True,
+                progress=False,
+            )
 
-        for sector in sorted(df["Sector"].unique()):
-            print(f"\n🔹 Sector: {sector}")
-            df_sector = df[df["Sector"] == sector]
-            print(f"{'Ticker':<6} {'Prev':>10} {'Cur':>10} {'%Chg':>8}")
-            for _, r in df_sector.iterrows():
-                c = Fore.GREEN if r["% Change"] > 0 else Fore.RED if r["% Change"] < 0 else Fore.LIGHTBLACK_EX
-                print(f"{r['Ticker']:<6} {r['Previous']:>10.2f} {r['Current']:>10.2f} {c}{r['% Change']:>7.2f}%{Style.RESET_ALL}")
+            if data is None or data.empty:
+                raise ValueError("No data returned from Yahoo Finance")
 
-        # Show errors
-        errors = pd.DataFrame([r for r in results if r.get("Error")])
-        if not errors.empty:
-            print("\n⚠️ Errors:")
-            for _, r in errors.iterrows():
-                print(f"{r['Ticker']:<6} - {Fore.YELLOW}{r['Error']}{Style.RESET_ALL}")
+            # Build results
+            results = []
+            for tk in TICKERS:
+                try:
+                    s = data["Close"][tk].dropna()
+                    if len(s) < 2:
+                        raise ValueError("Insufficient history")
+                    prev, current = s.iloc[-2], s.iloc[-1]
+                    change = (current - prev) / prev * 100.0
+                    results.append(
+                        {
+                            "Ticker": tk,
+                            "Sector": sectors.get(tk, "Unknown"),
+                            "Previous": prev,
+                            "Current": current,
+                            "% Change": change,
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "Ticker": tk,
+                            "Sector": sectors.get(tk, "Unknown"),
+                            "Previous": None,
+                            "Current": None,
+                            "% Change": None,
+                            "Error": str(exc),
+                        }
+                    )
 
-    except Exception as e:
-        print(Fore.RED + f"\n💥 Error during fetch: {e}" + Style.RESET_ALL)
+            # Display
+            valid = pd.DataFrame(results).dropna(subset=["% Change"])
+            if valid.empty:
+                logging.warning("No valid symbols to display.")
+            else:
+                valid = valid.sort_values(by="% Change", ascending=False)
+                print("\nPrice Change — Close vs Previous Close")
+                for sector in sorted(valid["Sector"].unique()):
+                    print_sector_block(valid[valid["Sector"] == sector], sector)
 
-    print("\n🔁 Waiting 10 seconds...\n")
-    time.sleep(10)
+            # Errors (if any)
+            errs = [r for r in results if r.get("Error")]
+            if errs:
+                print("\nErrors:")
+                for r in errs:
+                    print(f"{r['Ticker']:<6} - {r['Error']}")
+
+        except Exception as exc:
+            logging.error("Fetch/display error: %s", exc)
+
+        logging.info("Sleeping %s seconds...", REFRESH_SECONDS)
+        time.sleep(REFRESH_SECONDS)
+
+if __name__ == "__main__":
+    main()
 
 
 
