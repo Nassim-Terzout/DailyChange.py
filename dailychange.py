@@ -2,22 +2,126 @@ import os
 import json
 import time
 import logging
-from   typing import Dict, List
+from typing import Dict, List
 
 import pandas as pd
 import yfinance as yf
-from   colorama import Fore, Style
+from colorama import Fore, Style
 
 # -----------------------------
 # Configuration
 # -----------------------------
 TICKERS: List[str] = [
-    "SPY","PEP","PINS","DELL","KO","NVDA","AMD","AVGO","TSM","PYPL","UBER","SNAP","RDDT",
-    "META","GOOG","AMZN","LLY","MU","BIDU","BABA","T","F","TSLA","NIO","AMC",
-    "TTWO","ORCL","NFLX","COST","VZ","AAPL","PLTR","INTC","QUBT","HOOD",
-    "MSFT","V","UNH","WMT","JNJ","JPM","ADBE","AMGN","QCOM","ASML","AMAT",
-    "ADP","CTAS","BA","CAT","IBM","MCD","AXP","GS","DKNG","QQQ"
+    # ETFs
+    "SPY",
+    "QQQ",
+    # Consumer Defensive
+    "PEP",
+    "KO",
+    "COST",
+    "WMT",
+    # Consumer Cyclical
+    "AMZN",
+    "BABA",
+    "F",
+    "TSLA",
+    "NIO",
+    "MCD",
+    "DKNG",
+    "MELI",
+    "SE",
+    "EBAY",
+    "BKNG",
+    "DASH",
+    "WEN",
+    # Communication Services
+    "PINS",
+    "SNAP",
+    "RDDT",
+    "META",
+    "GOOG",
+    "T",
+    "AMC",
+    "TTWO",
+    "NFLX",
+    "VZ",
+    "BIDU",
+    "ROKU",
+    "DIS",
+    "SONY",
+    "SPOT",
+    "MTCH",
+    # Technology
+    "DELL",
+    "NVDA",
+    "AMD",
+    "AVGO",
+    "TSM",
+    "MU",
+    "ORCL",
+    "AAPL",
+    "PLTR",
+    "INTC",
+    "QUBT",
+    "MSFT",
+    "ADBE",
+    "QCOM",
+    "ASML",
+    "AMAT",
+    "ADP",
+    "IBM",
+    "CRM",
+    "NOW",
+    "SHOP",
+    "PANW",
+    "CRWD",
+    "MDB",
+    "ZS",
+    "DDOG",
+    "ARM",
+    "LRCX",
+    "KLAC",
+    "NXPI",
+    "ON",
+    "MRVL",
+    "UBER",
+    # Financial Services
+    "PYPL",
+    "HOOD",
+    "V",
+    "JPM",
+    "AXP",
+    "GS",
+    "MA",
+    "SQ",
+    "COIN",
+    "C",
+    "BAC",
+    "MS",
+    # Healthcare
+    "LLY",
+    "UNH",
+    "JNJ",
+    "AMGN",
+    "PFE",
+    "MRK",
+    "ABBV",
+    "REGN",
+    "BMY",
+    # Industrials
+    "CTAS",
+    "BA",
+    "CAT",
+    "GE",
+    "HON",
+    "LMT",
+    "RTX",
+    # Energy
+    "XOM",
+    "CVX",
 ]
+
+
 SECTOR_CACHE_FILE = "sectors.json"
 REFRESH_SECONDS = 10
 DOWNLOAD_PERIOD = "5d"
@@ -28,6 +132,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%H:%M:%S",
 )
+
 
 # -----------------------------
 # Sector mapping (cached)
@@ -44,6 +149,7 @@ def load_sector_cache(path: str) -> Dict[str, str]:
             logging.warning("Failed to read sector cache: %s", exc)
     return {}
 
+
 def build_sector_cache(tickers: List[str]) -> Dict[str, str]:
     """Fetch sector info once (best effort)."""
     sectors: Dict[str, str] = {}
@@ -57,6 +163,7 @@ def build_sector_cache(tickers: List[str]) -> Dict[str, str]:
             logging.debug("Sector fetch failed for %s: %s", tk, exc)
         time.sleep(0.2)  # gentle pacing to avoid rate-limiting
     return sectors
+
 
 def ensure_sector_cache(path: str, tickers: List[str]) -> Dict[str, str]:
     sectors = load_sector_cache(path)
@@ -72,6 +179,7 @@ def ensure_sector_cache(path: str, tickers: List[str]) -> Dict[str, str]:
             logging.warning("Failed to write sector cache: %s", exc)
     return sectors
 
+
 # -----------------------------
 # Display helpers
 # -----------------------------
@@ -80,9 +188,9 @@ def print_sector_block(df: pd.DataFrame, sector: str) -> None:
     print(f"{'Ticker':<6} {'Prev':>10} {'Cur':>10} {'%Chg':>8}")
     for _, r in df.iterrows():
         color = (
-            Fore.GREEN if r["% Change"] > 0
-            else Fore.RED if r["% Change"] < 0
-            else Fore.LIGHTBLACK_EX
+            Fore.GREEN
+            if r["% Change"] > 0
+            else Fore.RED if r["% Change"] < 0 else Fore.LIGHTBLACK_EX
         )
         print(
             f"{r['Ticker']:<6} "
@@ -90,6 +198,7 @@ def print_sector_block(df: pd.DataFrame, sector: str) -> None:
             f"{r['Current']:>10.2f} "
             f"{color}{r['% Change']:>7.2f}%{Style.RESET_ALL}"
         )
+
 
 # -----------------------------
 # Main loop
@@ -164,10 +273,6 @@ def main() -> None:
         logging.info("Sleeping %s seconds...", REFRESH_SECONDS)
         time.sleep(REFRESH_SECONDS)
 
+
 if __name__ == "__main__":
     main()
-
-
-
-
-
